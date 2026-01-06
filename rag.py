@@ -34,7 +34,8 @@ def initialize_components():
         llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.9, max_tokens=500)
 
     if vector_store is None:
-        ef = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        from langchain_openai import OpenAIEmbeddings
+ef = OpenAIEmbeddings()
         vector_store = Chroma(
             collection_name=COLLECTION_NAME,
             embedding_function=ef,
