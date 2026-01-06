@@ -1,10 +1,11 @@
 python-dotenv
 streamlit
-unstructured
+sentence-transformers
+unstructured[local-inference]
 tiktoken
 langchain-chroma
 langchain-groq
 langchain-community
-protobuf
+protobuf<5
 langchain-huggingface
-sentence-transformers
+torch
