@@ -1,5 +1,6 @@
 from uuid import uuid4
-from dotenv import load_dotenv
+from dotenv
+
 from pathlib import Path
 import shutil
 import time
