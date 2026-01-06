@@ -4,8 +4,6 @@ from pathlib import Path
 import shutil
 import time
 import os
-
-# Modern imports (no deprecation warnings)
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import UnstructuredURLLoader
