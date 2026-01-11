@@ -6,11 +6,12 @@ from langchain_chroma import Chroma
 from langchain_community.document_loaders import UnstructuredURLLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 
 load_dotenv()
 
-CHUNK_SIZE = 1000
+CHUNK_SIZE = 800
+MAX_CONTEXT_CHARS = 6000   # 🔑 critical
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 COLLECTION_NAME = "real_estate"
 
@@ -20,20 +21,19 @@ vector_store = None
 
 def initialize_llm():
     global llm
-
     if llm is None:
         llm = ChatGroq(
             api_key=os.environ["GROQ_API_KEY"],
-            model=os.environ.get("GROQ_MODEL", "llama-3.1-70b-versatile"),
-            temperature=0.3,
-            max_tokens=512,
+            model="llama3-8b-8192",   # ✅ SAFE MODEL
+            temperature=0.2,
+            max_tokens=400,
         )
 
 
 def process_urls(urls):
     global vector_store
 
-    yield "Initializing model..."
+    yield "Initializing LLM..."
     initialize_llm()
 
     yield "Loading URLs..."
@@ -43,11 +43,11 @@ def process_urls(urls):
     yield "Splitting text..."
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
-        chunk_overlap=150,
+        chunk_overlap=100,
     )
     split_docs = splitter.split_documents(docs)
 
-    yield "Creating embeddings..."
+    yield "Creating vector store..."
     vector_store = Chroma(
         collection_name=COLLECTION_NAME,
         embedding_function=HuggingFaceEmbeddings(
@@ -56,8 +56,7 @@ def process_urls(urls):
     )
 
     vector_store.add_documents(split_docs)
-
-    yield "✅ Done! You can now ask questions."
+    yield "✅ URLs processed. Ask questions now."
 
 
 def generate_answer(question: str) -> str:
@@ -67,15 +66,17 @@ def generate_answer(question: str) -> str:
     initialize_llm()
 
     docs = vector_store.similarity_search(question, k=4)
-    context = "\n\n".join(d.page_content for d in docs)
+
+    context = ""
+    for d in docs:
+        if len(context) + len(d.page_content) > MAX_CONTEXT_CHARS:
+            break
+        context += d.page_content + "\n\n"
 
     messages = [
         SystemMessage(
-            content=(
-                "You are a real estate research assistant.\n"
-                "Answer ONLY from the provided context.\n"
-                "If the answer is not present, say 'I don't know.'"
-            )
+            content="You are a real estate research assistant. "
+                    "Answer only using the provided context."
         ),
         HumanMessage(
             content=f"Context:\n{context}\n\nQuestion:\n{question}"
