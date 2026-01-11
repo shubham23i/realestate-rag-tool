@@ -1,113 +1,92 @@
 import os
-from typing import List
+from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import UnstructuredURLLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains.retrieval import create_retrieval_chain
+from langchain_core.runnables import RunnablePassthrough
 
-# =========================
-# Configuration
-# =========================
+# Load env
+load_dotenv()
 
 CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 100
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 COLLECTION_NAME = "real_estate"
-
-# =========================
-# Globals (Streamlit-safe)
-# =========================
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 llm = None
 vector_store = None
 
-# =========================
-# Initialization
-# =========================
 
-def init_llm():
+def initialize_llm():
     global llm
 
-    if llm is not None:
-        return
+    if llm is None:
+        llm = ChatGroq(
+            api_key=os.getenv("GROQ_API_KEY"),
+            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            temperature=0.3,
+            max_tokens=500,
+        )
 
-    api_key = os.getenv("GROQ_API_KEY")
-    model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
 
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY not found")
-
-    llm = ChatGroq(
-        model=model,
-        temperature=0,
-        max_tokens=512,
-    )
-
-# =========================
-# URL Processing
-# =========================
-
-def process_urls(urls: List[str]):
+def process_urls(urls):
     global vector_store
 
-    yield "🔧 Initializing model..."
-    init_llm()
+    initialize_llm()
 
-    yield "🌐 Loading URLs..."
     loader = UnstructuredURLLoader(urls=urls)
     documents = loader.load()
 
-    yield "✂️ Splitting text..."
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
+        chunk_overlap=100
     )
-    chunks = splitter.split_documents(documents)
+    docs = splitter.split_documents(documents)
 
-    yield "🧠 Creating embeddings..."
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    embeddings = HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL
+    )
 
     vector_store = Chroma(
         collection_name=COLLECTION_NAME,
         embedding_function=embeddings,
     )
 
-    vector_store.add_documents(chunks)
+    vector_store.add_documents(docs)
 
-    yield "✅ Done! You can now ask questions."
+    return "URLs processed successfully."
 
-# =========================
-# Question Answering
-# =========================
 
 def generate_answer(question: str) -> str:
     if vector_store is None:
-        return "⚠️ Please enter URLs and click **Process URLs** first."
+        return "Please process URLs first."
 
     retriever = vector_store.as_retriever(search_kwargs={"k": 4})
 
     prompt = ChatPromptTemplate.from_template(
-        """
-You are a helpful real estate research assistant.
-Use ONLY the context below to answer the question.
-If the answer is not in the context, say you don't know.
+        """You are a real estate financial assistant.
+Use ONLY the context below to answer.
+If you don't know, say you don't know.
 
-<context>
+Context:
 {context}
-</context>
 
 Question:
-{input}
+{question}
 """
     )
 
-    document_chain = create_stuff_documents_chain(llm, prompt)
-    retrieval_chain = create_retrieval_chain(retriever, document_chain)
+    chain = (
+        {
+            "context": retriever | (lambda docs: "\n\n".join(d.page_content for d in docs)),
+            "question": RunnablePassthrough(),
+        }
+        | prompt
+        | llm
+    )
 
-    result = retrieval_chain.invoke({"input": question})
-    return result["answer"]
+    response = chain.invoke(question)
+    return response.content
