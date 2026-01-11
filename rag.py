@@ -97,5 +97,6 @@ def generate_answer(query):
         | llm
     )
 
-    response = chain.invoke(query)
+    
+    response = chain.invoke({"question": query})
     return response.content
