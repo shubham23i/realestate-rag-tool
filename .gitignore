@@ -3,3 +3,5 @@ __pycache__/
 .env
 resources/vectorstore/
 .DS_Store
+.idea/
+.ipynb_checkpoints/
