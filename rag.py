@@ -1,113 +1,87 @@
 import os
-from typing import List
+from dotenv import load_dotenv
 
-from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import UnstructuredURLLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains.retrieval import create_retrieval_chain
+from langchain_groq import ChatGroq
+from langchain_core.messages import SystemMessage, HumanMessage
 
-# =========================
-# Configuration
-# =========================
+load_dotenv()
 
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 100
+CHUNK_SIZE = 800
+MAX_CONTEXT_CHARS = 6000   # 🔑 critical
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 COLLECTION_NAME = "real_estate"
-
-# =========================
-# Globals (Streamlit-safe)
-# =========================
 
 llm = None
 vector_store = None
 
-# =========================
-# Initialization
-# =========================
 
-def init_llm():
+def initialize_llm():
     global llm
+    if llm is None:
+        llm = ChatGroq(
+            api_key=os.environ["GROQ_API_KEY"],
+            model="llama3-8b-8192",   # ✅ SAFE MODEL
+            temperature=0.2,
+            max_tokens=400,
+        )
 
-    if llm is not None:
-        return
 
-    api_key = os.getenv("GROQ_API_KEY")
-    model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
-
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY not found")
-
-    llm = ChatGroq(
-        model=model,
-        temperature=0,
-        max_tokens=512,
-    )
-
-# =========================
-# URL Processing
-# =========================
-
-def process_urls(urls: List[str]):
+def process_urls(urls):
     global vector_store
 
-    yield "🔧 Initializing model..."
-    init_llm()
+    yield "Initializing LLM..."
+    initialize_llm()
 
-    yield "🌐 Loading URLs..."
+    yield "Loading URLs..."
     loader = UnstructuredURLLoader(urls=urls)
-    documents = loader.load()
+    docs = loader.load()
 
-    yield "✂️ Splitting text..."
+    yield "Splitting text..."
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
+        chunk_overlap=100,
     )
-    chunks = splitter.split_documents(documents)
+    split_docs = splitter.split_documents(docs)
 
-    yield "🧠 Creating embeddings..."
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-
+    yield "Creating vector store..."
     vector_store = Chroma(
         collection_name=COLLECTION_NAME,
-        embedding_function=embeddings,
+        embedding_function=HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL
+        ),
     )
 
-    vector_store.add_documents(chunks)
+    vector_store.add_documents(split_docs)
+    yield "✅ URLs processed. Ask questions now."
 
-    yield "✅ Done! You can now ask questions."
-
-# =========================
-# Question Answering
-# =========================
 
 def generate_answer(question: str) -> str:
     if vector_store is None:
-        return "⚠️ Please enter URLs and click **Process URLs** first."
+        raise RuntimeError("Please process URLs first.")
 
-    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
+    initialize_llm()
 
-    prompt = ChatPromptTemplate.from_template(
-        """
-You are a helpful real estate research assistant.
-Use ONLY the context below to answer the question.
-If the answer is not in the context, say you don't know.
+    docs = vector_store.similarity_search(question, k=4)
 
-<context>
-{context}
-</context>
+    context = ""
+    for d in docs:
+        if len(context) + len(d.page_content) > MAX_CONTEXT_CHARS:
+            break
+        context += d.page_content + "\n\n"
 
-Question:
-{input}
-"""
-    )
+    messages = [
+        SystemMessage(
+            content="You are a real estate research assistant. "
+                    "Answer only using the provided context."
+        ),
+        HumanMessage(
+            content=f"Context:\n{context}\n\nQuestion:\n{question}"
+        ),
+    ]
 
-    document_chain = create_stuff_documents_chain(llm, prompt)
-    retrieval_chain = create_retrieval_chain(retriever, document_chain)
-
-    result = retrieval_chain.invoke({"input": question})
-    return result["answer"]
+    response = llm.invoke(messages)
+    return response.content
