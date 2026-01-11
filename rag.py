@@ -1,3 +1,7 @@
+import os
+print("GROQ_API_KEY loaded:", bool(os.getenv("GROQ_API_KEY")))
+print("GROQ_MODEL:", os.getenv("GROQ_MODEL"))
+
 from uuid import uuid4
 from dotenv import load_dotenv
 import os
