@@ -33,7 +33,7 @@ query = st.text_input("❓ Ask a question")
 
 if query:
     try:
-        answer, sources = generate_answer(query)
+        answer= generate_answer(query)
 
         st.subheader("🧠 Answer")
         st.write(answer)
