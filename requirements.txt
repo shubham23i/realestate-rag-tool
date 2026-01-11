@@ -1,15 +1,11 @@
-streamlit
-python-dotenv
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+langchain-chroma>=0.1.0
+langchain-groq>=0.1.0
+langchain-huggingface>=0.0.3
 
-langchain
-langchain-community
-langchain-core
-langchain-openai
-langchain-groq
-langchain-chroma
-langchain-huggingface
-
-chromadb
-sentence-transformers
-unstructured
-uuid
+chromadb>=0.4.22
+sentence-transformers>=2.2.2
+unstructured>=0.10.30
+streamlit>=1.32.0
