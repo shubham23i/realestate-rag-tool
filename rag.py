@@ -19,7 +19,7 @@ load_dotenv()
 # Constants
 CHUNK_SIZE = 1000
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-VECTORSTORE_DIR = Path(__file__).parent / "resources/vectorstore"
+
 COLLECTION_NAME = "real_estate"
 
 llm = None
@@ -37,57 +37,35 @@ def initialize_components():
         ef = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
         vector_store = Chroma(
             collection_name=COLLECTION_NAME,
-            embedding_function=ef,
-            persist_directory=str(VECTORSTORE_DIR)
+            embedding_function=ef
         )
 
 
 def process_urls(urls):
-    """Scrape data from URLs and store in Chroma vector DB"""
     global vector_store
-    yield "Initializing Components"
+    yield "Initializing components...⏳"
     initialize_components()
-
-    yield "Resetting vector store...✅"
-
-    # Safely close Chroma DB before deleting directory
-    try:
-        if vector_store and hasattr(vector_store, "_client"):
-            vector_store._client.close()
-            time.sleep(1)
-    except Exception as e:
-        print(f"Warning: could not close vector store cleanly: {e}")
-
-    # Now safely delete directory
-    if VECTORSTORE_DIR.exists():
-        shutil.rmtree(VECTORSTORE_DIR, ignore_errors=True)
-        time.sleep(0.5)
-
-    ef = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-
-    vector_store = Chroma(
-        collection_name=COLLECTION_NAME,
-        embedding_function=ef,
-        persist_directory=str(VECTORSTORE_DIR)
-    )
 
     yield "Loading data...✅"
     loader = UnstructuredURLLoader(urls=urls)
     data = loader.load()
 
-    yield "Splitting text into chunks...✅"
+    yield "Splitting text into chunks...✂️"
     text_splitter = RecursiveCharacterTextSplitter(
-        separators=["\n\n", "\n", ".", " "],
-        chunk_size=CHUNK_SIZE
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=100
     )
     docs = text_splitter.split_documents(data)
 
-    yield "Adding chunks to vector database...✅"
-    uuids = [str(uuid4()) for _ in range(len(docs))]
-    vector_store.add_documents(docs, ids=uuids)
-    #vector_store.persist()
+    yield "Creating vector embeddings...📦"
+    vector_store = Chroma(
+        collection_name=COLLECTION_NAME,
+        embedding_function=HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    )
 
-    yield "Done adding docs to vector database...✅"
+    vector_store.add_documents(docs)
+
+    yield "Done! You can now ask questions 🎉"
 
 
 def generate_answer(query):
