@@ -65,29 +65,31 @@ def generate_answer(question: str) -> str:
 
     initialize_llm()
 
-    # Search for relevant docs
+    # Get top-k docs
     docs = vector_store.similarity_search(question, k=4)
 
-    # Build context safely
     context = ""
     for d in docs:
         if len(context) + len(d.page_content) > MAX_CONTEXT_CHARS:
             break
         context += d.page_content.strip() + "\n\n"
 
-    # Build messages as plain dicts
+    # Ensure content is not empty
+    if not context.strip():
+        context = "No context found."
+
+    # Groq-safe messages
     messages = [
-        {"role": "system", "content": (
-            "You are a real estate research assistant. "
-            "Answer only using the provided context."
-        )},
+        {"role": "system", "content": "You are a real estate research assistant. Answer only using the provided context."},
         {"role": "user", "content": f"Context:\n{context}\n\nQuestion:\n{question}"}
     ]
 
-    # Call Groq
+    # Debug: print messages
+    print("Sending to Groq:", messages)
+
     response = llm.invoke(messages)
 
-    # Some versions of Groq return response differently
+    # Handle different response types
     if hasattr(response, "content"):
         return response.content
     elif isinstance(response, dict) and "content" in response:
