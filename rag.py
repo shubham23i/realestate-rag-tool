@@ -1,102 +1,127 @@
 import os
-print("GROQ_API_KEY loaded:", bool(os.getenv("GROQ_API_KEY")))
-print("GROQ_MODEL:", os.getenv("GROQ_MODEL"))
-
 from uuid import uuid4
-from dotenv import load_dotenv
-import os
-import time
+from typing import List
 
+from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import UnstructuredURLLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import RunnableLambda
 
-load_dotenv()
+# =========================
+# Configuration
+# =========================
 
 CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 100
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 COLLECTION_NAME = "real_estate"
+
+# =========================
+# Globals (Streamlit-safe)
+# =========================
 
 llm = None
 vector_store = None
 
+# =========================
+# Initialization
+# =========================
 
-def initialize_components():
-    global llm, vector_store
+def init_llm():
+    """Initialize Groq LLM exactly once"""
+    global llm
 
-    if not os.environ.get("GROQ_API_KEY"):
+    if llm is not None:
+        return
+
+    api_key = os.getenv("GROQ_API_KEY")
+    model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
+
+    if not api_key:
         raise RuntimeError("GROQ_API_KEY not found in environment variables")
 
-    if llm is None:
-        llm = ChatGroq(
-            model=os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
-            api_key=os.environ.get("GROQ_API_KEY"),
-            temperature=0.9,
-            max_tokens=500,
-        )
+    llm = ChatGroq(
+        model=model,
+        temperature=0,
+        max_tokens=512,
+    )
 
 
-def process_urls(urls):
+# =========================
+# URL Processing
+# =========================
+
+def process_urls(urls: List[str]):
+    """Load URLs, chunk them, embed them, store in Chroma"""
+
     global vector_store
 
-    yield "Initializing components..."
-    initialize_components()
+    yield "🔧 Initializing model..."
+    init_llm()
 
-    yield "Loading data..."
+    yield "🌐 Loading URLs..."
     loader = UnstructuredURLLoader(urls=urls)
-    data = loader.load()
+    documents = loader.load()
 
-    yield "Splitting text..."
+    yield "✂️ Splitting text..."
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
-        chunk_overlap=100
+        chunk_overlap=CHUNK_OVERLAP,
     )
-    docs = splitter.split_documents(data)
+    chunks = splitter.split_documents(documents)
 
-    yield "Creating embeddings..."
+    yield "🧠 Creating embeddings..."
+    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+
     vector_store = Chroma(
         collection_name=COLLECTION_NAME,
-        embedding_function=HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL),
+        embedding_function=embeddings,
     )
 
-    vector_store.add_documents(docs)
+    vector_store.add_documents(chunks)
 
-    yield "Done! You can now ask questions."
+    yield "✅ Done! You can now ask questions."
 
 
-def generate_answer(query):
+# =========================
+# Question Answering
+# =========================
+
+def generate_answer(question: str) -> str:
+    """Run RAG chain and return answer"""
+
     if vector_store is None:
-        raise RuntimeError("Please process URLs first.")
+        return "⚠️ Please enter URLs and click **Process URLs** first."
 
-    retriever = vector_store.as_retriever()
+    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
 
     prompt = ChatPromptTemplate.from_template(
         """
-        You are a financial assistant.
-        Use the context below to answer the question.
-        If the answer is not present, say you don't know.
+You are a helpful real estate research assistant.
+Use ONLY the context below to answer the question.
+If the answer is not present, say you don't know.
 
-        Context:
-        {context}
+Context:
+{context}
 
-        Question:
-        {question}
-        """
+Question:
+{question}
+"""
     )
 
     chain = (
         {
-            "context": retriever | (lambda docs: "\n\n".join(d.page_content for d in docs)),
-            "question": RunnablePassthrough(),
+            "context": RunnableLambda(lambda x: x["question"])
+            | retriever
+            | RunnableLambda(lambda docs: "\n\n".join(d.page_content for d in docs)),
+            "question": RunnableLambda(lambda x: x["question"]),
         }
         | prompt
         | llm
     )
 
-    
-    response = chain.invoke({"question": query})
+    response = chain.invoke({"question": question})
     return response.content
