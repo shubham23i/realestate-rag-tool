@@ -1,20 +1,18 @@
 import os
 from dotenv import load_dotenv
 
-from langchain_groq import ChatGroq
-from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
 from langchain_community.document_loaders import UnstructuredURLLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage, SystemMessage
 
-# Load env
 load_dotenv()
 
 CHUNK_SIZE = 1000
-COLLECTION_NAME = "real_estate"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+COLLECTION_NAME = "real_estate"
 
 llm = None
 vector_store = None
@@ -25,69 +23,64 @@ def initialize_llm():
 
     if llm is None:
         llm = ChatGroq(
-            api_key=os.getenv("GROQ_API_KEY"),
-            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            api_key=os.environ["GROQ_API_KEY"],
+            model=os.environ.get("GROQ_MODEL", "llama-3.1-70b-versatile"),
             temperature=0.3,
-            max_tokens=500,
+            max_tokens=512,
         )
 
 
 def process_urls(urls):
     global vector_store
 
+    yield "Initializing model..."
     initialize_llm()
 
+    yield "Loading URLs..."
     loader = UnstructuredURLLoader(urls=urls)
-    documents = loader.load()
+    docs = loader.load()
 
+    yield "Splitting text..."
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
-        chunk_overlap=100
+        chunk_overlap=150,
     )
-    docs = splitter.split_documents(documents)
+    split_docs = splitter.split_documents(docs)
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL
-    )
-
+    yield "Creating embeddings..."
     vector_store = Chroma(
         collection_name=COLLECTION_NAME,
-        embedding_function=embeddings,
+        embedding_function=HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL
+        ),
     )
 
-    vector_store.add_documents(docs)
+    vector_store.add_documents(split_docs)
 
-    return "URLs processed successfully."
+    yield "✅ Done! You can now ask questions."
 
 
-def generate_answer(question: str):
+def generate_answer(question: str) -> str:
     if vector_store is None:
         raise RuntimeError("Please process URLs first.")
 
-    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
+    initialize_llm()
 
-    prompt = ChatPromptTemplate.from_template(
-        """
-        You are a helpful real estate assistant.
-        Use ONLY the context below to answer the question.
-        If the answer is not in the context, say "I don't know".
+    docs = vector_store.similarity_search(question, k=4)
+    context = "\n\n".join(d.page_content for d in docs)
 
-        Context:
-        {context}
+    messages = [
+        SystemMessage(
+            content=(
+                "You are a real estate research assistant.\n"
+                "Answer ONLY from the provided context.\n"
+                "If the answer is not present, say 'I don't know.'"
+            )
+        ),
+        HumanMessage(
+            content=f"Context:\n{context}\n\nQuestion:\n{question}"
+        ),
+    ]
 
-        Question:
-        {question}
-        """
-    )
-
-    chain = (
-        {
-            "context": retriever | (lambda docs: "\n\n".join(d.page_content for d in docs)),
-            "question": RunnablePassthrough(),
-        }
-        | prompt
-        | llm
-    )
-
-    response = chain.invoke(question)
+    response = llm.invoke(messages)
     return response.content
