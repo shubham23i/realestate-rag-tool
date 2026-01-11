@@ -60,23 +60,24 @@ def process_urls(urls):
     return "URLs processed successfully."
 
 
-def generate_answer(question: str) -> str:
+def generate_answer(question: str):
     if vector_store is None:
-        return "Please process URLs first."
+        raise RuntimeError("Please process URLs first.")
 
     retriever = vector_store.as_retriever(search_kwargs={"k": 4})
 
     prompt = ChatPromptTemplate.from_template(
-        """You are a real estate financial assistant.
-Use ONLY the context below to answer.
-If you don't know, say you don't know.
+        """
+        You are a helpful real estate assistant.
+        Use ONLY the context below to answer the question.
+        If the answer is not in the context, say "I don't know".
 
-Context:
-{context}
+        Context:
+        {context}
 
-Question:
-{question}
-"""
+        Question:
+        {question}
+        """
     )
 
     chain = (
