@@ -1,5 +1,4 @@
 import os
-from uuid import uuid4
 from typing import List
 
 from langchain_groq import ChatGroq
@@ -8,7 +7,8 @@ from langchain_chroma import Chroma
 from langchain_community.document_loaders import UnstructuredURLLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableLambda
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains.retrieval import create_retrieval_chain
 
 # =========================
 # Configuration
@@ -31,7 +31,6 @@ vector_store = None
 # =========================
 
 def init_llm():
-    """Initialize Groq LLM exactly once"""
     global llm
 
     if llm is not None:
@@ -41,7 +40,7 @@ def init_llm():
     model = os.getenv("GROQ_MODEL", "llama3-70b-8192")
 
     if not api_key:
-        raise RuntimeError("GROQ_API_KEY not found in environment variables")
+        raise RuntimeError("GROQ_API_KEY not found")
 
     llm = ChatGroq(
         model=model,
@@ -49,14 +48,11 @@ def init_llm():
         max_tokens=512,
     )
 
-
 # =========================
 # URL Processing
 # =========================
 
 def process_urls(urls: List[str]):
-    """Load URLs, chunk them, embed them, store in Chroma"""
-
     global vector_store
 
     yield "🔧 Initializing model..."
@@ -85,14 +81,11 @@ def process_urls(urls: List[str]):
 
     yield "✅ Done! You can now ask questions."
 
-
 # =========================
 # Question Answering
 # =========================
 
 def generate_answer(question: str) -> str:
-    """Run RAG chain and return answer"""
-
     if vector_store is None:
         return "⚠️ Please enter URLs and click **Process URLs** first."
 
@@ -102,26 +95,19 @@ def generate_answer(question: str) -> str:
         """
 You are a helpful real estate research assistant.
 Use ONLY the context below to answer the question.
-If the answer is not present, say you don't know.
+If the answer is not in the context, say you don't know.
 
-Context:
+<context>
 {context}
+</context>
 
 Question:
-{question}
+{input}
 """
     )
 
-    chain = (
-        {
-            "context": RunnableLambda(lambda x: x["question"])
-            | retriever
-            | RunnableLambda(lambda docs: "\n\n".join(d.page_content for d in docs)),
-            "question": RunnableLambda(lambda x: x["question"]),
-        }
-        | prompt
-        | llm
-    )
+    document_chain = create_stuff_documents_chain(llm, prompt)
+    retrieval_chain = create_retrieval_chain(retriever, document_chain)
 
-    response = chain.invoke({"question": question})
-    return response.content
+    result = retrieval_chain.invoke({"input": question})
+    return result["answer"]
